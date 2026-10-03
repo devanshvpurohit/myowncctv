@@ -76,7 +76,7 @@
 
 // Your Vercel deployment URL — no trailing slash
 // Example: "https://myowncctv-abc123.vercel.app"
-#define VERCEL_HOST         "https://YOUR-APP.vercel.app"
+#define VERCEL_HOST         "https://myowncctv.vercel.app"
 
 // How often to ask Vercel for a command (milliseconds)
 #define POLL_INTERVAL_MS     5000UL
