@@ -1,7 +1,8 @@
-import { redis } from "./_redis.js";
+import { redis, requireRedis } from "./_redis.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).end("Method Not Allowed");
+  if (!requireRedis(res)) return;
 
   const [lastSeen, snapshotTime, snapshotSize, flashState] = await Promise.all([
     redis.get("esp32:lastSeen"),
