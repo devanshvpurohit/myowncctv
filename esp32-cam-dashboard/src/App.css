@@ -486,3 +486,56 @@ code {
   border-radius: 7px;
   border-left: 3px solid var(--border);
 }
+
+/* ─── cloud mode specific ────────────────────────────────────────────────────── */
+.mode-pill--cloud { background: #1a1a3a; color: #a78bfa; border: 1px solid #a78bfa40; }
+
+.cloud-ts-pill {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  background: #000000cc;
+  color: #a78bfa;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 20px;
+  pointer-events: none;
+}
+
+.cloud-polling-dot {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #a78bfa;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.cloud-device-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.cloud-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.cloud-dot--on  { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.cloud-dot--off { background: var(--muted); }
+
+.cloud-info {
+  background: #ffffff06;
+  border-radius: 7px;
+  border-left: 3px solid #a78bfa;
+  padding: 10px 12px;
+  margin-top: 4px;
+}

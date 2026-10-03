@@ -4,9 +4,26 @@ import "./App.css";
 // ─── storage keys ─────────────────────────────────────────────────────────────
 const KEY_IP        = "esp32cam_ip";
 const KEY_RELAY_URL = "esp32cam_relay_url";
-const KEY_MODE      = "esp32cam_mode"; // "direct" | "relay"
+const KEY_MODE      = "esp32cam_mode"; // "direct" | "relay" | "cloud"
 
 const DEFAULT_IP    = "192.168.4.1";
+
+// ─── cloud API helpers (same-origin calls to /api/*) ──────────────────────────
+async function cloudCommand(command) {
+  const res = await fetch("/api/command", {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ command }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function cloudStatus() {
+  const res = await fetch("/api/status");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 function buildUrl(mode, ip, relayUrl, path) {
@@ -115,11 +132,17 @@ function ConnectionPanel({
           className={`mode-tab ${mode === "relay" ? "mode-tab--active" : ""}`}
           onClick={() => setMode("relay")}
         >
-          🔀 Relay (API)
+          🔀 Relay
+        </button>
+        <button
+          className={`mode-tab ${mode === "cloud" ? "mode-tab--active" : ""}`}
+          onClick={() => setMode("cloud")}
+        >
+          ☁️ Cloud
         </button>
       </div>
 
-      {mode === "direct" ? (
+      {mode === "direct" && (
         <>
           <p className="mode-desc">
             Direct connection to the ESP32-CAM over your local Wi-Fi.
@@ -147,7 +170,9 @@ function ConnectionPanel({
           </form>
           <SetupSteps />
         </>
-      ) : (
+      )}
+
+      {mode === "relay" && (
         <>
           <p className="mode-desc">
             Route all camera traffic through a local relay server exposed via a
@@ -176,6 +201,24 @@ function ConnectionPanel({
             </div>
           </form>
           <RelayInstructions />
+        </>
+      )}
+
+      {mode === "cloud" && (
+        <>
+          <p className="mode-desc">
+            The ESP32-CAM polls this Vercel deployment directly. No relay or local
+            network needed — works from anywhere in the world.
+          </p>
+          <div className="cloud-info">
+            <p className="setup-help__title">☁️ How it works</p>
+            <ol className="setup-help__steps">
+              <li>Flash the firmware with your Vercel URL set as <code>VERCEL_HOST</code></li>
+              <li>The ESP32-CAM connects to your home Wi-Fi via captive portal</li>
+              <li>It polls <code>/api/esp32-ping</code> every 5 s for commands</li>
+              <li>Use the controls below to take snapshots or toggle the flash</li>
+            </ol>
+          </div>
         </>
       )}
     </Card>
@@ -251,8 +294,15 @@ export default function App() {
   const [testState,    setTestState]   = useState("idle");
   const [uptime,       setUptime]      = useState(0);
 
+  // ── cloud mode state ───────────────────────────────────────────────────────
+  const [cloudStatus,       setCloudStatus]      = useState(null);   // from /api/status
+  const [cloudSnapshot,     setCloudSnapshot]    = useState(null);   // object URL of /api/snapshot JPEG
+  const [cloudSnapshotTime, setCloudSnapshotTime]= useState(null);
+  const [cloudPolling,      setCloudPolling]     = useState(false);
+
   const frameRef   = useRef(0);
   const uptimeRef  = useRef(null);
+  const cloudTimer = useRef(null);
 
   // ── persist settings ──────────────────────────────────────────────────────
   useEffect(() => { localStorage.setItem(KEY_IP,        ip);       }, [ip]);
@@ -269,6 +319,40 @@ export default function App() {
     }
     return () => clearInterval(uptimeRef.current);
   }, [streamStatus]);
+
+  // ── cloud poller — polls /api/status + /api/snapshot every 5 s ───────────
+  useEffect(() => {
+    if (mode !== "cloud") {
+      clearInterval(cloudTimer.current);
+      setCloudPolling(false);
+      return;
+    }
+
+    async function tick() {
+      try {
+        // Status (online + last-seen)
+        const st = await cloudStatus();
+        setCloudStatus(st);
+
+        // If a new snapshot exists and its timestamp changed, fetch the image
+        if (st.hasSnapshot && st.snapshotTime !== cloudSnapshotTime) {
+          const imgRes = await fetch(`/api/snapshot?t=${Date.now()}`);
+          if (imgRes.ok) {
+            const blob = await imgRes.blob();
+            const objUrl = URL.createObjectURL(blob);
+            setCloudSnapshot((prev) => { if (prev) URL.revokeObjectURL(prev); return objUrl; });
+            setCloudSnapshotTime(st.snapshotTime);
+          }
+        }
+      } catch { /* silent — toast only on user action */ }
+    }
+
+    setCloudPolling(true);
+    tick();  // run immediately
+    cloudTimer.current = setInterval(tick, 5000);
+    return () => clearInterval(cloudTimer.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, cloudSnapshotTime]);
 
   // ── current base URL based on mode ───────────────────────────────────────
   const url = useCallback(
@@ -412,15 +496,85 @@ export default function App() {
         </div>
         <div className="topbar__right">
           <span className={`mode-pill mode-pill--${mode}`}>
-            {mode === "relay" ? "🔀 Relay" : "📡 Direct"}
+            {mode === "relay" ? "🔀 Relay" : mode === "cloud" ? "☁️ Cloud" : "📡 Direct"}
           </span>
-          <StatusBadge status={streamStatus} />
+          <StatusBadge status={mode === "cloud"
+            ? (cloudStatus?.online ? "live" : "disconnected")
+            : streamStatus} />
         </div>
       </header>
 
       <main className="main">
-        {/* ── stream column ── */}
+        {/* ── stream / cloud column ── */}
         <section className="col col--stream">
+
+          {/* ── CLOUD VIEW ───────────────────────────────────────── */}
+          {mode === "cloud" && (
+            <Card title="Cloud View" icon="☁️">
+              <div className="stream-viewport">
+                {cloudSnapshot ? (
+                  <>
+                    <img className="stream-img" src={cloudSnapshot}
+                         alt={`Cloud snapshot at ${cloudSnapshotTime}`} />
+                    <div className="cloud-ts-pill">
+                      🕐 {cloudSnapshotTime
+                            ? new Date(cloudSnapshotTime).toLocaleTimeString()
+                            : "—"}
+                    </div>
+                  </>
+                ) : (
+                  <div className="stream-placeholder">
+                    <span className="stream-placeholder__icon">☁️</span>
+                    <p>{cloudStatus?.online ? "No snapshot yet" : "ESP32-CAM offline"}</p>
+                    <p className="stream-placeholder__sub">
+                      {cloudStatus?.online
+                        ? "Press Request Snapshot to capture"
+                        : "Waiting for ESP32-CAM to come online…"}
+                    </p>
+                  </div>
+                )}
+                {cloudPolling && (
+                  <div className="cloud-polling-dot" title="Polling /api/status every 5 s" />
+                )}
+              </div>
+
+              {/* cloud controls */}
+              <div className="stream-controls">
+                <IconButton icon="📸" label="Request Snapshot" variant="primary"
+                  onClick={async () => {
+                    try {
+                      await cloudCommand("snapshot");
+                      addToast("Snapshot requested — ESP32 will upload shortly ☁️", "info");
+                    } catch (e) { addToast(`Failed: ${e.message}`, "error"); }
+                  }} />
+                <IconButton icon="💡" label="Flash ON"  variant="warning"
+                  onClick={async () => {
+                    try { await cloudCommand("flash_on");  addToast("Flash ON queued 💡", "success"); }
+                    catch (e) { addToast(`Failed: ${e.message}`, "error"); }
+                  }} />
+                <IconButton icon="🔦" label="Flash OFF" variant="default"
+                  onClick={async () => {
+                    try { await cloudCommand("flash_off"); addToast("Flash OFF queued 🔦", "success"); }
+                    catch (e) { addToast(`Failed: ${e.message}`, "error"); }
+                  }} />
+              </div>
+
+              {/* cloud device status */}
+              <div className="cloud-device-status">
+                <span className={`cloud-dot cloud-dot--${cloudStatus?.online ? "on" : "off"}`} />
+                {cloudStatus?.online
+                  ? <>ESP32-CAM online · last seen {
+                      cloudStatus.lastSeen
+                        ? new Date(cloudStatus.lastSeen).toLocaleTimeString()
+                        : "—"
+                    }</>
+                  : "ESP32-CAM offline or not yet connected"}
+              </div>
+            </Card>
+          )}
+
+          {/* ── DIRECT / RELAY STREAM ────────────────────────────── */}
+          {mode !== "cloud" && (
           <Card title="Live Stream" icon="🎥">
             <div className="stream-viewport">
               {streaming ? (
@@ -464,6 +618,7 @@ export default function App() {
               />
             </div>
           </Card>
+          )}
 
           {snapshot && (
             <Card title="Last Snapshot" icon="🖼️">
